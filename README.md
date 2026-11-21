@@ -6,8 +6,8 @@ it, with two changes, so that it works over HF radio.**
 
 ## Install
 
-Install it exactly the way upstream documents it: download a release binary for your
-platform, make a config, run it once to generate an identity.
+Download the binary for your platform, make a config, run it once to generate an
+identity. That is the whole install.
 
 | Asset | Target |
 |---|---|
@@ -19,9 +19,41 @@ platform, make a config, run it once to generate an identity.
 | `fwdsvc-windows-amd64.exe` | x86_64 Windows |
 
 [Download the latest release](https://github.com/smeshT/reticulum-group-chat/releases/latest),
-`chmod +x` it, and follow
-[upstream's README](https://github.com/thatSFguy/reticulum-group-chat#install-and-first-run)
-from step 2 onward. Nothing else about running it changes.
+then:
+
+```sh
+chmod +x fwdsvc-linux-arm64                       # the file for your platform
+mv fwdsvc-linux-arm64 ~/.local/bin/fwdsvc         # anywhere on your PATH
+
+mkdir -p ~/.fwdsvc
+curl -L -o ~/.fwdsvc/config.toml \
+  https://raw.githubusercontent.com/smeshT/reticulum-group-chat/main/configs/fwdsvc.example.toml
+```
+
+Edit `~/.fwdsvc/config.toml` and set two things:
+
+- `display_name` — what your chat is called, visible to every node it reaches.
+- `[[interfaces]]` → `addr` — the Reticulum peer to dial. The example already points at
+  a community entry node, which works to get started. For real use, point it at your own
+  `rnsd`.
+
+Then add the HF settings from [Change 1](#change-1-link-and-retry-timeouts-for-hf) to the
+same file, and start it:
+
+```sh
+fwdsvc -config ~/.fwdsvc/config.toml
+```
+
+On first run it prints:
+
+```
+service identity hash: <hash>
+delivery destination : <hash>
+```
+
+**The delivery destination is your chat's address** — the thing people message in their
+LXMF client. Everything else, including adding yourself as admin, is in
+[upstream's README](https://github.com/thatSFguy/reticulum-group-chat#install-and-first-run).
 
 ## Change 1: link and retry timeouts for HF
 
