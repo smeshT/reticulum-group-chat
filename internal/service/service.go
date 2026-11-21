@@ -400,6 +400,31 @@ func (s *Service) Run(ctx context.Context) error {
 	s.logger.Infof("roster size         : %d", len(s.roster.Hashes()))
 	s.logger.Infof("history size        : %d", s.history.Len())
 	s.logger.Infof("pinned messages     : %d", s.info.PinCount())
+	// Print the EFFECTIVE values, not the configured ones: an unset key
+	// falls back to the library default inside reticulum-go, and an
+	// operator who sets link_send_timeout has no other way to confirm it
+	// took. Showing "0" or omitting the line would leave them guessing,
+	// which is the failure this line exists to prevent.
+	{
+		linkSend := s.cfg.Timing.LinkSendTimeout.Std()
+		if linkSend <= 0 {
+			linkSend = rns.DefaultLinkSendTimeout
+		}
+		proof := s.cfg.Timing.DeliveryProofTimeout.Std()
+		if proof <= 0 {
+			proof = lxmf.DefaultDeliveryProofTimeout
+		}
+		attempts := s.cfg.Outbound.MaxAttempts
+		if attempts <= 0 {
+			attempts = maxDeliveryAttempts
+		}
+		retry := s.cfg.Outbound.RetryWait.Std()
+		if retry <= 0 {
+			retry = deliveryRetryWait
+		}
+		s.logger.Infof("timing              : link_send=%s proof=%s attempts=%d retry=%s",
+			linkSend, proof, attempts, retry)
+	}
 	// /setinfo sized the description against the display name in force at
 	// the time; an operator can lengthen display_name or flip `locked` at
 	// any restart, after which the stored description no longer fits. The
