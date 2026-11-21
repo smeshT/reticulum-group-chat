@@ -225,6 +225,21 @@ func New(cfg *config.Config) (*Service, error) {
 	// instead of pinning a worker.
 	delivery.MaxStampCost = 16
 
+	// Optional per-instance timing overrides. Zero means keep the library
+	// default, which is sized for LoRa (30s link send, 15s delivery proof).
+	// An HF link needs far more: measured round trips on the author's
+	// network are 35-120s, so a 30s ceiling covering handshake + DATA +
+	// proof cannot complete.
+	if t := cfg.Timing.LinkSendTimeout.Std(); t > 0 {
+		delivery.LinkSendTimeout = t
+	}
+	if t := cfg.Timing.DeliveryProofTimeout.Std(); t > 0 {
+		delivery.DeliveryProofTimeout = t
+	}
+	if t := cfg.Timing.PropagationSendTimeout.Std(); t > 0 {
+		delivery.PropagationSendTimeout = t
+	}
+
 	// The other direction (SPEC §5.7.2 step 3 / §5.7.4): what we require
 	// of senders, and whether we act on it. Both default to off, which
 	// keeps the library on its no-check path — a cost of 0 short-
@@ -260,6 +275,16 @@ func New(cfg *config.Config) (*Service, error) {
 		},
 		outboundStore,
 		logger,
+	)
+	// Optional direct-delivery retry overrides. Zero values keep the
+	// library defaults (5 attempts, 10s apart), which are sized for a LoRa
+	// segment where the failure mode is a single packet collision. On HF
+	// the count multiplies by a 240s link timeout, and 10s is shorter than
+	// a failed handshake needs to clear the channel.
+	outbound.SetOutboundTiming(
+		cfg.Outbound.MaxAttempts,
+		cfg.Outbound.RetryWait.Std(),
+		cfg.Outbound.RetryMaxBackoff.Std(),
 	)
 	if cfg.Propagation.Enabled {
 		outbound.SetPropagation(

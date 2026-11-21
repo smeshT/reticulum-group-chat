@@ -49,6 +49,15 @@ type Config struct {
 	// A warning rather than an error so that an upgrade cannot refuse to
 	// start a deployment that has been carrying a harmless stray key.
 	Warnings []string `toml:"-"`
+
+	// Timing carries optional link/delivery timeout overrides. Zero values
+	// keep the library defaults, so an absent [timing] section changes
+	// nothing.
+	Timing TimingConfig `toml:"timing"`
+
+	// Outbound carries optional direct-delivery retry overrides. Zero
+	// values keep the library defaults.
+	Outbound OutboundConfig `toml:"outbound"`
 }
 
 // PropagationConfig controls store-and-forward delivery via LXMF
@@ -132,6 +141,53 @@ func (p *PropagationConfig) NodeBytes() []byte {
 		return nil
 	}
 	return raw
+}
+
+// TimingConfig overrides link and delivery timeouts. Every field is an
+// optional override; zero means "keep the library default", so an absent
+// [timing] section behaves exactly as before.
+//
+// These exist because reticulum-go sizes its defaults for LoRa. On an HF
+// link the measured round trip is 35-120s, so a 30s DefaultLinkSendTimeout
+// (which covers handshake + DATA + proof) cannot complete. Setting
+// link_send_timeout = "240s" for an HF instance keeps the LoRa-sized
+// defaults everywhere else.
+type TimingConfig struct {
+	// LinkSendTimeout caps handshake + DATA broadcast + proof wait for
+	// one direct delivery. reticulum-go default: 30s.
+	LinkSendTimeout Duration `toml:"link_send_timeout"`
+
+	// DeliveryProofTimeout caps the wait for a recipient's delivery proof
+	// after an opportunistic send. reticulum-go default: 15s.
+	DeliveryProofTimeout Duration `toml:"delivery_proof_timeout"`
+
+	// PropagationSendTimeout caps a single propagation-node upload
+	// (handshake + transfer + proof). Library default applies when zero.
+	PropagationSendTimeout Duration `toml:"propagation_send_timeout"`
+}
+
+// OutboundConfig overrides the direct-delivery retry policy.
+//
+// The library defaults mirror LXMF's LoRa-oriented policy: 5 attempts,
+// 10s apart. That is wrong for an HF link in two separate ways. The
+// attempt count determines how long one unreachable member occupies an
+// outbound worker (attempts * link_send_timeout), and the 10s interval is
+// shorter than the time a failed handshake needs to clear the channel at
+// 37 bps. A retry interval longer than the slowest observed successful
+// establishment (~120s on the author's network) is the useful shape.
+type OutboundConfig struct {
+	// MaxAttempts is the direct-delivery attempt budget before a message
+	// is dropped or handed to a propagation node. 0 = library default (5).
+	MaxAttempts int `toml:"max_attempts"`
+
+	// RetryWait is the delay before the second attempt. Later attempts
+	// double it, capped at RetryMaxBackoff. 0 = library default (10s).
+	RetryWait Duration `toml:"retry_wait"`
+
+	// RetryMaxBackoff caps the exponential growth of RetryWait.
+	// 0 = library default (60s). It is clamped up to at least RetryWait
+	// so that a long RetryWait is not silently shortened.
+	RetryMaxBackoff Duration `toml:"retry_max_backoff"`
 }
 
 type ServiceConfig struct {
@@ -533,6 +589,24 @@ func (c *Config) normalize() error {
 	}
 	if c.Service.MaxMembers < 0 {
 		return fmt.Errorf("service.max_members must be >= 0")
+	}
+	if c.Timing.LinkSendTimeout.Std() < 0 {
+		return fmt.Errorf("timing.link_send_timeout must not be negative")
+	}
+	if c.Timing.DeliveryProofTimeout.Std() < 0 {
+		return fmt.Errorf("timing.delivery_proof_timeout must not be negative")
+	}
+	if c.Timing.PropagationSendTimeout.Std() < 0 {
+		return fmt.Errorf("timing.propagation_send_timeout must not be negative")
+	}
+	if c.Outbound.MaxAttempts < 0 {
+		return fmt.Errorf("outbound.max_attempts must not be negative")
+	}
+	if c.Outbound.RetryWait.Std() < 0 {
+		return fmt.Errorf("outbound.retry_wait must not be negative")
+	}
+	if c.Outbound.RetryMaxBackoff.Std() < 0 {
+		return fmt.Errorf("outbound.retry_max_backoff must not be negative")
 	}
 	if c.Service.DedupWindow.Std() < 0 {
 		return fmt.Errorf("service.dedup_window must be >= 0 (0 disables)")

@@ -202,6 +202,7 @@ type OutboundQueue struct {
 	// Tunables exposed for tests; production uses the package constants.
 	interval        time.Duration
 	retryWait       time.Duration
+	retryMaxBackoff time.Duration
 	pathRequestWait time.Duration
 	maxAttempts     int
 	pathlessTries   int
@@ -234,6 +235,7 @@ func newOutboundQueue(sender outboundSender, store *outboundStore, logger *loggi
 		flushEvery:      persistFlushInterval,
 		interval:        processingInterval,
 		retryWait:       deliveryRetryWait,
+		retryMaxBackoff: maxRetryBackoff,
 		pathRequestWait: pathRequestWait,
 		maxAttempts:     maxDeliveryAttempts,
 		pathlessTries:   maxPathlessTries,
@@ -250,6 +252,23 @@ func (q *OutboundQueue) SetPropagation(fallback, always bool, directAttempts int
 	q.propagationFallback = fallback
 	q.propagationAlways = always
 	q.directAttempts = directAttempts
+	q.mu.Unlock()
+}
+
+// SetOutboundTiming overrides the direct-delivery retry policy. Call
+// before Run. Negative values are ignored; zero keeps the current value,
+// so a caller can set only the fields it cares about.
+func (q *OutboundQueue) SetOutboundTiming(maxAttempts int, retryWait, retryMaxBackoff time.Duration) {
+	q.mu.Lock()
+	if maxAttempts > 0 {
+		q.maxAttempts = maxAttempts
+	}
+	if retryWait > 0 {
+		q.retryWait = retryWait
+	}
+	if retryMaxBackoff > 0 {
+		q.retryMaxBackoff = retryMaxBackoff
+	}
 	q.mu.Unlock()
 }
 
@@ -657,12 +676,19 @@ func (q *OutboundQueue) attempt(msg *outboundMessage) {
 // wait (15s) — with a fixed interval a few offline members re-occupy
 // the pool every 10s and starve sends to reachable recipients.
 func (q *OutboundQueue) backoffWait(attempts int) time.Duration {
+	// The cap is never allowed below the base interval. Clamping a
+	// configured 180s retry_wait down to a 60s default would silently
+	// discard the setting on exactly the slow links it exists for.
+	cap := q.retryMaxBackoff
+	if cap < q.retryWait {
+		cap = q.retryWait
+	}
 	wait := q.retryWait
-	for i := 1; i < attempts && wait < maxRetryBackoff; i++ {
+	for i := 1; i < attempts && wait < cap; i++ {
 		wait *= 2
 	}
-	if wait > maxRetryBackoff {
-		wait = maxRetryBackoff
+	if wait > cap {
+		wait = cap
 	}
 	return wait
 }
