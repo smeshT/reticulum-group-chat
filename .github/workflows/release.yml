@@ -5,6 +5,11 @@ name: release
 # section points users at these assets; before this workflow they were
 # uploaded by hand and had been missing since v1.4.0.
 on:
+  push:
+    # A tag push builds and publishes the release by itself. The manual
+    # "publish release" step was easy to forget and left assets missing
+    # since v1.4.0.
+    tags: ["v*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -40,9 +45,20 @@ jobs:
           sha256sum fwdsvc-* > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Create release if the tag push did not already
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${{ github.event.release.tag_name || inputs.tag || github.ref_name }}"
+          gh release view "$tag" >/dev/null 2>&1 ||
+            gh release create "$tag" \
+              --title "fwdsvc ${tag}" \
+              --notes "Built from this tag by workflow release.yml." \
+              --verify-tag
+
       - name: Attach to release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="${{ github.event.release.tag_name || inputs.tag }}"
+          tag="${{ github.event.release.tag_name || inputs.tag || github.ref_name }}"
           gh release upload "$tag" build/fwdsvc-* build/SHA256SUMS --clobber
