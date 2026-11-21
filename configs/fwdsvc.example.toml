@@ -281,3 +281,66 @@ direct_attempts = 3
 
 # (admins / mods are now at the top of the file — see the comment block
 # at the start. They MUST be top-level keys before any [section] header.)
+
+# ---------------------------------------------------------------------------
+# Link and retry timeouts
+# ---------------------------------------------------------------------------
+# reticulum-go sizes its delivery timeouts for LoRa, where a frame is short
+# and a round trip is seconds. Neither holds on a half-duplex HF link: one
+# frame occupies the channel for over ten seconds, so a round trip is measured
+# in minutes.
+#
+# Measured round trips on an HF link: 35.7s, 40.5s, 120.7s. The library default
+# of 30s for a link send (handshake + DATA broadcast + proof wait) cannot
+# complete a send whose round trip is 40s -- the failure is arithmetic, not bad
+# luck. A send that hits the ceiling looks exactly like an unreachable member,
+# so the symptom is "some members never get messages" rather than an obvious
+# timeout.
+#
+# These are HF settings. On TCP they are inert: a send finishes long before 30s
+# either way, so leaving them here costs nothing on a fast link.
+#
+# They only help the side that dials. Fan-out to each member is a link THIS
+# host opens, so this host's budget decides the outcome -- no setting on a
+# member can compensate for a hub that gives up early. Put them on the hub.
+#
+#[timing]
+# Cap for one direct send: handshake + DATA broadcast + proof wait.
+# Library default: 30s. Must exceed the slowest round trip you actually see.
+#link_send_timeout      = "240s"
+#
+# Cap for waiting on a recipient's delivery proof after the DATA is out.
+# Library default: 15s. On HF the proof is one more full round trip.
+#delivery_proof_timeout = "90s"
+#
+# Cap for a single propagation-node upload (handshake + transfer + proof).
+# Library default: 45s. Leave unset when the node is local or on TCP; raise it
+# when the node is reached over the same slow link as your members.
+#propagation_send_timeout = "240s"
+
+
+# ---------------------------------------------------------------------------
+# Direct-delivery retry policy
+# ---------------------------------------------------------------------------
+# The attempt count matters as much as the timeout above. outboundWorkers runs
+# 8 sends concurrently, and each in-flight send holds one worker for the WHOLE
+# link_send_timeout. At the defaults (5 attempts) and an HF timeout (240s),
+# three unreachable members occupy the pool for an hour -- messages to reachable
+# members queue behind them. Two attempts cuts that to 8 minutes.
+#
+# retry_wait cannot stay at the 10s default on a half-duplex channel: a retry
+# that starts before the previous attempt's airtime has cleared is a collision
+# by construction, not by chance. It must exceed the slowest observed
+# successful establishment (120.7s here), or retries actively make things worse.
+#
+#[outbound]
+# Attempts before a message is dropped or handed to a propagation node.
+# Library default: 5.
+#max_attempts      = 2
+#
+# Pause between attempts. Library default: 10s.
+#retry_wait        = "180s"
+#
+# Optional ceiling for exponential backoff between attempts. Unset falls back
+# to the library's own cap.
+#retry_max_backoff = "600s"
