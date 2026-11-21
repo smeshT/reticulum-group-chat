@@ -1,58 +1,94 @@
-# reticulum-group-chat (`fwdsvc`)
+# fwdsvc with HF timeouts
 
-**A Reticulum group chat.** `fwdsvc` is a small daemon that hosts a
-multi-user text chat over the [Reticulum
-Network](https://reticulum.network), using [LXMF](https://github.com/markqvist/LXMF)
-for message delivery. Each chat is one running service. Anyone with the
-service's destination hash can `/join`, send messages, and have them
-fanned out to every other member — a many-to-many group chat over
-whatever Reticulum transport(s) you have available (LoRa, TCP/IP, your
-own mesh, etc.).
+`fwdsvc` is a Reticulum group-chat daemon by
+[thatSFguy](https://github.com/thatSFguy/reticulum-group-chat). **This is a fork of
+it, with two changes, so that it works over HF radio.**
 
-If you've used IRC, Matrix, or Telegram groups, the user experience is
-similar. The difference is that the chat travels over Reticulum, so it
-works on radios with no Internet, can be relayed across mixed
-LoRa+TCP+I2P meshes, and the operator is just one person running this
-binary on a Pi.
+## Install
 
-- **No third-party Reticulum library.** Pure-Go implementation of the
-  protocol layers we need, written directly against
-  [the spec](https://github.com/thatSFguy/reticulum-specifications).
-- **Verified against upstream Python `rns` + `LXMF`** at the byte level
-  (static test vectors plus a live subprocess interop harness running
-  on CI).
-- **Live-tested end-to-end** with Sideband, NomadNet, and MeshChat over
-  public Reticulum testnet entry nodes.
-- **One static binary** — runs unattended on a Raspberry Pi, a Debian
-  server, macOS, or Windows. No runtime, no Python, no daemon zoo.
+Install it exactly the way upstream documents it: download a release binary for your
+platform, make a config, run it once to generate an identity.
+
+| Asset | Target |
+|---|---|
+| `fwdsvc-linux-amd64`       | x86_64 Linux (Debian/Ubuntu/etc.) |
+| `fwdsvc-linux-arm64`       | ARM64 Linux (RPi 4/5 64-bit, most ARM SBCs) |
+| `fwdsvc-linux-armv7`       | 32-bit ARMv7 (RPi 2/3 32-bit) |
+| `fwdsvc-linux-armv6`       | 32-bit ARMv6 (RPi Zero, RPi 1) |
+| `fwdsvc-darwin-arm64`      | Apple Silicon macOS |
+| `fwdsvc-windows-amd64.exe` | x86_64 Windows |
+
+[Download the latest release](https://github.com/smeshT/reticulum-group-chat/releases/latest),
+`chmod +x` it, and follow
+[upstream's README](https://github.com/thatSFguy/reticulum-group-chat#install-and-first-run)
+from step 2 onward. Nothing else about running it changes.
+
+## Change 1: link and retry timeouts for HF
+
+`reticulum-go` sizes its delivery timeouts for LoRa. A single frame on a
+half-duplex HF link occupies the channel for over ten seconds, so a round trip is
+measured in minutes — and the defaults cannot complete one.
+
+**This fork adds the settings; the release binary still defaults to upstream's values.**
+You have to set them. Upstream has no `[timing]` or `[outbound]` section at all, so on
+upstream these numbers are not reachable.
+
+| Setting | Upstream | What an HF link needs |
+|---|---|---|
+| link send (handshake + DATA + proof) | 30s | **240s** |
+| delivery proof wait | 15s | **90s** |
+| direct-delivery attempts | 5 | **2** |
+| pause between attempts | 10s | **180s** |
+
+Add this to your `~/.fwdsvc/config.toml`:
+
+```toml
+[timing]
+link_send_timeout      = "240s"
+delivery_proof_timeout = "90s"
+
+[outbound]
+max_attempts = 2
+retry_wait   = "180s"
+```
+
+**Why those numbers:** measured round trips on an HF link here were 35.7s, 40.5s and
+120.7s. A 30s ceiling cannot complete a send whose round trip is 40s — the failure is
+arithmetic, not bad luck. And a 10s retry starts while the previous attempt is still on
+the air, so `retry_wait` must exceed the slowest observed success.
+
+**Why the attempt count matters as much as the timeout:** eight outbound workers run
+concurrently and each in-flight send holds one for the whole timeout. Five attempts at
+240s against three unreachable members saturates the pool for an hour; two attempts does
+not.
+
+**These only help the side that dials.** Fan-out to each member is a link this host opens,
+so the hub's budget decides the outcome and no setting on a member can compensate. Put
+them on the hub.
+
+**The defaults are inert on TCP**, because those sends finish long before 30s. Setting
+these on a fast link costs nothing.
+
+## Change 2: propagation-node uploads
+
+`reticulum-go` required exactly seven elements in a propagation-node announce. Current
+Python LXMF publishes eight (fractional stamp costs, marked transitional upstream), so
+every upload failed at the announce — including against a stock `lxmd` on the same
+machine:
+
+```
+invalid lxmf.propagation announce app_data: 8 elements, want 7
+```
+
+The library is patched in
+[`smeshT/fwdsvc_hf`](https://github.com/smeshT/fwdsvc_hf) and pinned by commit in this
+repo's `go.mod`, so building from source fetches it automatically.
 
 ---
 
-> **This is a fork of [`thatSFguy/reticulum-group-chat`](https://github.com/thatSFguy/reticulum-group-chat).**
->
-> **The releases here are built for HF.** Upstream sizes its link and
-> delivery timeouts for LoRa, which a half-duplex HF link cannot meet: a
-> single frame occupies the channel for over ten seconds, so a round trip
-> is measured in minutes. This fork adds `[timing]` and `[outbound]`
-> sections so an HF member can actually receive a fan-out.
->
-> It also carries a second fix: `reticulum-go` rejected the
-> propagation-node announce that current Python LXMF publishes, which
-> broke store-and-forward uploads against every modern node, including a
-> stock `lxmd`. The library is [patched
-> here](https://github.com/smeshT/fwdsvc_hf).
->
-> **Nothing here is upstream's build.** If you do not run an HF link, use
-> [upstream's repo](https://github.com/thatSFguy/reticulum-group-chat)
-> instead — the `[timing]` defaults are inert on TCP, so this fork is
-> harmless there, but it is not the canonical source.
->
-> | | |
-> |---|---|
-> | Built from | tag `v1.19.1-hf` |
-> | Changes | `[timing]`/`[outbound]` overrides; patched `reticulum-go` |
-> | Everything else | unmodified upstream `v1.19.1` |
-> | Rebuildable | yes — the workflow builds and attaches these assets on every tag push |
+**Everything below this line is upstream's documentation, unchanged.** It describes
+`fwdsvc` as upstream ships it, which is what this fork is apart from the two changes
+above.
 
 ---
 
