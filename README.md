@@ -28,6 +28,34 @@ binary on a Pi.
 
 ---
 
+> **This is a fork of [`thatSFguy/reticulum-group-chat`](https://github.com/thatSFguy/reticulum-group-chat).**
+>
+> **The releases here are built for HF.** Upstream sizes its link and
+> delivery timeouts for LoRa, which a half-duplex HF link cannot meet: a
+> single frame occupies the channel for over ten seconds, so a round trip
+> is measured in minutes. This fork adds `[timing]` and `[outbound]`
+> sections so an HF member can actually receive a fan-out.
+>
+> It also carries a second fix: `reticulum-go` rejected the
+> propagation-node announce that current Python LXMF publishes, which
+> broke store-and-forward uploads against every modern node, including a
+> stock `lxmd`. The library is [patched
+> here](https://github.com/smeshT/fwdsvc_hf).
+>
+> **Nothing here is upstream's build.** If you do not run an HF link, use
+> [upstream's repo](https://github.com/thatSFguy/reticulum-group-chat)
+> instead — the `[timing]` defaults are inert on TCP, so this fork is
+> harmless there, but it is not the canonical source.
+>
+> | | |
+> |---|---|
+> | Built from | tag `v1.19.1-hf` |
+> | Changes | `[timing]`/`[outbound]` overrides; patched `reticulum-go` |
+> | Everything else | unmodified upstream `v1.19.1` |
+> | Rebuildable | yes — the workflow builds and attaches these assets on every tag push |
+
+---
+
 ## Table of contents
 
 1. [What this is, and how it works](#what-this-is-and-how-it-works)
@@ -194,7 +222,7 @@ messages addressed to a destination hash, deliverable opportunistically
 
 ### 1. Get the binary
 
-[Download the latest release](https://github.com/thatSFguy/reticulum-group-chat/releases/latest)
+[Download the latest release](https://github.com/smeshT/reticulum-group-chat/releases/latest)
 for your platform:
 
 | Asset | Target |
@@ -226,7 +254,7 @@ install from a package manager, check that
 fwdsvc --version
 ```
 
-matches the [latest release](https://github.com/thatSFguy/reticulum-group-chat/releases/latest).
+matches the [latest release](https://github.com/smeshT/reticulum-group-chat/releases/latest).
 If it doesn't, prefer the release binary above or a source build until
 the package catches up.
 
@@ -234,7 +262,7 @@ the package catches up.
 
 ```sh
 mkdir -p ~/.fwdsvc
-curl -L https://raw.githubusercontent.com/thatSFguy/reticulum-group-chat/main/configs/fwdsvc.example.toml \
+curl -L https://raw.githubusercontent.com/smeshT/reticulum-group-chat/main/configs/fwdsvc.example.toml \
   -o ~/.fwdsvc/config.toml
 ```
 
@@ -1144,12 +1172,19 @@ LXMF to run a group-chat hub. Notable gaps:
 Requires Go 1.26 or newer.
 
 ```sh
-git clone https://github.com/thatSFguy/reticulum-group-chat
+git clone https://github.com/smeshT/reticulum-group-chat
 cd reticulum-group-chat
 go mod tidy
 go build -o fwdsvc ./cmd/fwdsvc
 go test ./...
 ```
+
+This fork's `go.mod` replaces `github.com/thatSFguy/reticulum-go` with
+[`github.com/smeshT/fwdsvc_hf`](https://github.com/smeshT/fwdsvc_hf), pinned by
+commit. That is the patched library: it accepts the 8-element propagation-node
+announce that current Python LXMF publishes. The replace is committed, so
+`go mod tidy` fetches the right code with no extra step — but it does mean a
+build needs network access to that repo.
 
 Cross-compile every release target into `build/`:
 
